@@ -9,6 +9,7 @@ rm -r dir*
 
 if [ ! -d "logs" ]; then
 	mkdir logs
+        mkdir results
 else
 	rm logs/*
 fi
@@ -23,4 +24,4 @@ if [ ! -d "sets" ]; then
 fi
 
 #do the scoring
-./totalControl.sh 1
+./totalControl.sh 2
