@@ -5,7 +5,7 @@ cp /home/kulmsc/slurm/input/smallFiles/phase${phaseNum}.eid phase.eid
 maxDirs=10
 maxJobs=10
 chrStart=1
-chrStop=10
+chrStop=22
 
 if [ $# -eq 0 ]; then
         echo "no argument"

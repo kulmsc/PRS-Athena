@@ -5,6 +5,7 @@ file=$2
 score=$3
 infoLim=0.3
 mafLim=0.01
+export OMP_NUM_THREADS=2
 
 echo THE SCORE IS $score
 
@@ -46,7 +47,6 @@ elif [ -f willBe.${chr} ]; then
 #will have to make files
 else
         echo yep > willBe.${chr}
-        plim=`cat /home/kulmsc/slurm/input/smallFiles/subsetCLUMP | cut -f1 -d'-' | sort -n | tail -1`
         numBgens=`ls *bgen | wc -l`
         checkGoing=True
         while [ $checkGoing == "True" ];do
@@ -60,16 +60,16 @@ else
         done
 
         echo must do the prep work
-	ls /home/kulmsc/athena/forScoring/chr$chr | grep gz$ | grep -v split | while read rsLine; do
-                zcat /home/kulmsc/athena/forScoring/chr${chr}/$rsLine | awk -v var="$infoLim" '$7 > var {print $0}' | \
+	ls /athena/elementolab/scratch/kulmsc/forScoring/chr$chr | grep gz$ | grep -v split | while read rsLine; do
+                zcat /athena/elementolab/scratch/kulmsc/forScoring/chr${chr}/$rsLine | awk -v var="$infoLim" '$7 > var {print $0}' | \
                 awk '{ if (!($4=="A" && $5=="T" || $4 =="T" && $5 =="A" || $4 =="C" && $5 =="G" || $4 =="G" && $5 =="C") ) print $0; }' | \
                 awk 'length($4) == 1 {print $0}' | awk 'length($5) == 1 {print $0}' | \
-                awk '$10 > 0 {print $0}' | fgrep -v NA | cut -f2 | sort | uniq -u >> allRsid.$chr
+                awk '$10 > 0 {print $0}' | fgrep -v NA | fgrep -v nf | cut -f2 | sort | uniq -u >> allRsid.$chr
         done
 
-        bgenix -g /home/kulmsc/athena/ukbiobank/imputed/ukbb.${chr}.bgen -incl-rsids allRsid.$chr > new.${chr}.bgen
-        #rm chr${chr}.bgen chr${chr}.bgen.bgi
-        plink2 --memory 4000 --bgen new.${chr}.bgen --sample /home/kulmsc/athena/ukbiobank/imputed/ukbb.${chr}.sample --make-bed --out realTemp.$chr --threads 1
+        bgenix -g /athena/elementolab/scratch/kulmsc/ukbiobank/imputed/ukbb.${chr}.bgen -incl-rsids allRsid.$chr > new.${chr}.bgen
+        rm chr${chr}.bgen chr${chr}.bgen.bgi
+        plink2 --memory 4000 --bgen new.${chr}.bgen --sample /athena/elementolab/scratch/kulmsc/ukbiobank/imputed/ukbb.${chr}.sample --make-bed --out realTemp.$chr --threads 1
 	plink --memory 4000 --bfile realTemp.$chr --keep-fam phase.eid --make-bed --out new.temp.${chr} --threads 1
 	rm realTemp.${chr}.*
         plink --memory 4000 --bfile new.temp.${chr} --freq --out new.temp.${chr} --threads 1
@@ -78,21 +78,28 @@ else
         plink --memory 4000 --bfile new.temp.${chr} --exclude badRsids.${chr} --make-bed --out new.${chr} --threads 1
         cat new.${chr}.bim | cut -f2 > goodRsids.${chr}
         rm new.${chr}.bgen new.temp.${chr}.* chr${chr}.sample
+	plink --bfile new.${chr} --freq --out new.${chr}
 
-        #for ldpred LDPredFunct annoPred
-        #cp /home/cbsumezey/sdk2004/1000genomes/eur.chr${chr}.*  .
-        #for grabld
-        #if grep -Fxq grabld allScores; then
-        #        cat new.${chr}.fam | cut -f1 | sort -R | head -1000 > fam500.${chr}
-        #        plink --bfile new.$chr --keep-fam fam500.${chr} --recode A --out forLD.${chr}
-        #        cp ~/prsDatabase/ldGrabBLD.R ldGrabBLD.${chr}.R
-        #        Rscript ldGrabBLD.${chr}.R $chr
-        #        rm forLD.${chr}.raw ldGrabBLD.${chr}.R
-        #fi
-        #for LDPredFunct
-        #if [ ! -d "LDpred-funct" ]; then
-        #        cp -r ~/prsDatabase/LDpred-funct .
-        #fi
+	if [ $score == "stackCT" ]; then
+	        if [ ! -f new.${chr}.filter.rds ]; then
+	                if [ ! -f willBeStack.$chr ]; then
+	                        echo willBeStack > willBeStack.$chr
+	                        rm new.${chr}.filter*
+	                        plink --bfile new.$chr --geno 0.01 --fill-missing-a2 --make-bed --out new.${chr}.filter
+	                        Rscript ~/prsDatabase/makeStackRds.R $chr
+	                        rm new.${chr}.filter.bed
+	                        rm new.${chr}.filter.bim
+	                        rm new.${chr}.filter.fam
+	                else
+	                        while [ ! -f new.${chr}.filter.rds ];do
+	                                sleep 30
+	                        done
+	                fi
+	        fi
+	fi
+
+
+
         echo goodToGo > ready.$chr
 fi
 
@@ -108,47 +115,60 @@ echo $chr >> info
 echo $file >> info
 echo $score >> info
 
-echo NOW WE DO THE SCORING
-if [ $score == "clump" ]; then
-	
-        cp /home/kulmsc/slurm/input/smallFiles/fileHeader .
-        cp /home/kulmsc/slurm/input/smallFiles/subsetCLUMP .
+zcat /athena/elementolab/scratch/kulmsc/forScoring/chr${chr}/$file | awk -v var="$infoLim" '$7 > var {print $0}' | \
+        awk '{ if (!($4=="A" && $5=="T" || $4 =="T" && $5 =="A" || $4 =="C" && $5 =="G" || $4 =="G" && $5 =="C") ) print $0; }' | \
+        awk 'length($4) == 1 {print $0}' | awk 'length($5) == 1 {print $0}' | \
+	awk '$10 > 0 {print $0}' | fgrep -v NA | fgrep -v nf | sort -k2 | rev | uniq -f8 -u | rev > preSummStat
+fgrep -w -f ../goodRsids.${chr} preSummStat > temp; mv temp preSummStat
+ls ../store* | fgrep ss > storeRecord
+baseName="${file::-3}"
 
-        plim=`cat subsetCLUMP | cut -f1 -d'-' | sort -n | tail -1`
-        zcat /home/kulmsc/athena/forScoring/chr${chr}/$file | awk -v var="$infoLim" '$7 > var {print $0}' | \
-                awk '{ if (!($4=="A" && $5=="T" || $4 =="T" && $5 =="A" || $4 =="C" && $5 =="G" || $4 =="G" && $5 =="C") ) print $0; }' | \
-                awk 'length($4) == 1 {print $0}' | awk 'length($5) == 1 {print $0}' | \
-                awk '$10 > 0 {print $0}' | fgrep -v NA | sort -k2 | rev | uniq -f8 -u | rev > summStat
-        fgrep -w -f ../goodRsids.${chr} summStat > temp; mv temp summStat
-        cat fileHeader summStat > temp ; mv temp summStat
-        baseName="${file::-3}"
+echo NOW WE DO THE SCORING
+if [ $score == "report" ]; then
+	plink --threads 1 --bfile ../new.${chr} --score preSummStat 2 4 8 sum --out score.1
+
+	for i in 1; do
+	        if [ -f score.${i}.profile ]; then
+	        	sed 's/ \+/\t/g' score.${i}.profile | cut -f7 > ../store${dir}/${baseName}.${score}.${chr}.${i}
+	                gzip ../store${dir}/${baseName}.${score}.${chr}.${i}
+	        fi
+	done
+
+
+elif [ $score == "clump" ]; then
+        cp /home/kulmsc/slurm/input/smallFiles/fileHeader .
+        cat fileHeader preSummStat > temp ; mv temp preSummStat
 
         i=1
-        cat subsetCLUMP | while read sub; do
-                plim=`echo $sub | cut -f1 -d'-'`
-                r2lim=`echo $sub | cut -f2 -d'-'`
-                plink --memory 4000 --threads 1 --bfile ../new.${chr}  --clump summStat --clump-p1 $plim --clump-r2 $r2lim
-                if [ -f plink.clumped ]; then
-                        sed -e 's/ [ ]*/\t/g' plink.clumped | sed '/^\s*$/d' | cut -f4 | tail -n +2 > doneRsids
-                        fgrep -f doneRsids summStat > doneSummStat
-                        plink --threads 1 --bfile ../new.${chr} --score doneSummStat 2 4 8 no-sum
-                        mv doneSummStat ../sets/chr${chr}/${baseName}.${score}.${chr}.${i}
-                        if [ -f plink.profile ]; then
-                                sed 's/ \+/\t/g' plink.profile | cut -f7 > ../store${dir}/${baseName}.${score}.${chr}.${i}
-                                gzip ../store${dir}/${baseName}.${score}.${chr}.${i}
-                                rm plink.profile
-                        fi
-                        rm plink.clumped
-                fi
-                let i=i+1
+	for plim in 0.00000005 0.00005 0.05 0.5; do
+                for r2lim in 0.25 0.5 0.75; do
+			checkFile=`cat storeRecord | fgrep ${baseName}.${score}.${chr}.${i} | wc -l`
+			if [ $checkFile -eq 0 ]; then
+	                plink --memory 4000 --threads 1 --bfile ../new.${chr}  --clump preSummStat --clump-p1 $plim --clump-r2 $r2lim
+	                if [ -f plink.clumped ]; then
+	                        sed -e 's/ [ ]*/\t/g' plink.clumped | sed '/^\s*$/d' | cut -f4 | tail -n +2 > doneRsids
+	                        fgrep -f doneRsids preSummStat > summStat
+	                        plink --threads 1 --bfile ../new.${chr} --score summStat 2 4 8 sum
+	                        mv summStat ../sets/chr${chr}/${baseName}.${score}.${chr}.${i}
+	                        if [ -f plink.profile ]; then
+	                                sed 's/ \+/\t/g' plink.profile | cut -f7 > ../store${dir}/${baseName}.${score}.${chr}.${i}
+	                                gzip ../store${dir}/${baseName}.${score}.${chr}.${i}
+	                                rm plink.profile
+	                        fi
+	                        rm plink.clumped
+	                fi
+        	        let i=i+1
+			fi
+		done
         done
 
 elif [ $score == "sblup" ]; then  #WARNING - HIGH MEMORY USAGE
-        baseName="${file::-3}"
-        cp /home/kulmsc/slurm/input/smallFiles/makeMA.R .
-        cp /home/kulmsc/slurm/input/smallFiles/pToStat .
-        cp /home/kulmsc/slurm/input/smallFiles/metaData .
-        cp /home/kulmsc/slurm/input/smallFiles/allH2 .
+	checkFile=`cat storeRecord | fgrep ${baseName}.${score}.${chr}.1 | wc -l`
+        if [ $checkFile -eq 0 ]; then
+        cp /home/kulmsc/athena/workDir/extraFiles/makeMA.R .
+        cp /home/kulmsc/athena/workDir/extraFiles/pToStat .
+        cp /home/kulmsc/athena/workDir/extraFiles/metaData .
+        cp /home/kulmsc/athena/workDir/extraFiles/allH2 .
 
         author=`echo $file | cut -f1 -d'.'`
         sampSize=`cat metaData | fgrep $author | cut -f2`
@@ -156,15 +176,8 @@ elif [ $score == "sblup" ]; then  #WARNING - HIGH MEMORY USAGE
         herit=`cat allH2 | fgrep $author | cut -f2 -d' '`
         param=`echo "scale=4; $numSnps * (1/$herit)" | bc`
 
-        zcat /home/kulmsc/athena/forScoring/chr${chr}/$file | awk -v var="$infoLim" '$7 > var {print $0}' | \
-                awk '{ if (!($4=="A" && $5=="T" || $4 =="T" && $5 =="A" || $4 =="C" && $5 =="G" || $4 =="G" && $5 =="C") ) print $0; }' | \
-                awk 'length($4) == 1 {print $0}' | awk 'length($5) == 1 {print $0}' | \
-                awk '$10 > 0 {print $0}' | fgrep -v NA | sort -k2 | rev | uniq -f8 -u | rev > preSummStat
-        fgrep -w -f ../goodRsids.${chr} preSummStat > temp; mv temp preSummStat
-
-
 	cat preSummStat > win.ss
-        cat win.ss | cut -f2 > extraRsids
+        cat win.ss | cut -f2 | fgrep -w -f /athena/elementolab/scratch/kulmsc/refs/hapmapSnps > extraRsids
         plink --memory 4000 --bfile ../new.$chr --chr $chr --extract extraRsids --make-bed --out win
         Rscript makeMA.R $sampSize
         gcta64 --bfile win --cojo-file ss.ma --cojo-sblup $param --cojo-wind 100 --thread-num 1 --out part
@@ -177,61 +190,66 @@ elif [ $score == "sblup" ]; then  #WARNING - HIGH MEMORY USAGE
         cat summStat | cut -f1-7 > part1; cat summStat | cut -f9-10 > part2
         paste part1 newBeta part2 > finalSummStat
 
-        plink --memory 4000 --threads 1 --bfile ../new.${chr}  --score finalSummStat 2 4 8 no-sum
+        plink --memory 4000 --threads 1 --bfile ../new.${chr}  --score finalSummStat 2 4 8 sum
         if [ -f plink.profile ]; then
                 sed 's/ \+/\t/g' plink.profile | cut -f7 > ../store${dir}/${baseName}.${score}.${chr}.1
                 gzip ../store${dir}/${baseName}.${score}.${chr}.1
         fi
         mv finalSummStat ../sets/chr${chr}/${baseName}.${score}.${chr}.1
+	fi
 
-	cp sblup.sblup.cojo ../backup/${baseName}.${score}.${chr}.1
 
-elif [ $score == "prsCS" ]; then
-	zcat /home/kulmsc/athena/forScoring/chr${chr}/$file | awk -v var="$infoLim" '$7 > var {print $0}' | \
-	awk '{ if (!($4=="A" && $5=="T" || $4 =="T" && $5 =="A" || $4 =="C" && $5 =="G" || $4 =="G" && $5 =="C") ) print $0; }' | \
-	awk 'length($4) == 1 {print $0}' | awk 'length($5) == 1 {print $0}' | \
-	awk '$10 > 0 {print $0}' | fgrep -v NA | sort -k2 | rev | uniq -f8 -u | rev > fullSummStat
-        fgrep -w -f ../goodRsids.${chr} fullSummStat > temp; mv temp fullSummStat
+elif [ $score == "ldpred" ]; then
+	checkFile=`cat storeRecord | fgrep ${baseName}.${score}.${chr}.1 | wc -l`
+        if [ $checkFile -eq 0 ]; then
+        python /athena/elementolab/scratch/kulmsc/workDir/extraFiles/makeLDPredStandard.py
+        cp ~/athena/workDir/extraFiles/makeLDPredSet.R .
+        authorName=`echo $file | cut -f1 -d'.'`
+        sampleSize=`cat /athena/elementolab/scratch/kulmsc/workDir/extraFiles/metaData | grep $authorName | cut -f2`
+        numberSnps=`cat /athena/elementolab/scratch/kulmsc/workDir/extraFiles/metaData | grep $authorName | cut -f3`
+        let ldr=numberSnps/4500
 
-        cat fullSummStat | cut -f2,4,5,8,10 > goSummStat
+        taskset -c $dir python ~/bin/LDPred.py coord --gf=/athena/elementolab/scratch/kulmsc/refs/ukbbRef/ukbb.ref.$chr --ssf=summStat --N=$sampleSize --out=madeCoord --ssf-format=STANDARD
+        #taskset -c $dir python ~/bin/LDPred.py coord --gf=/athena/elementolab/scratch/kulmsc/refs/1000genomes/eur.chr$chr --ssf=summStat --N=$sampleSize --out=madeCoord --ssf-format=STANDARD
+	#taskset -c $dir python ~/bin/LDPred.py coord --gf=/athena/elementolab/scratch/kulmsc/refs/ukbbRef/ukbb.ref.$chr --ssf=summStat --N=$sampleSize --out=madeCoord --A1 a1 --A2 a2 --pos pos --chr hg19chrc --pval p --eff or --rs snpid
+	for f in 0.5 0.3 0.1 0.05 0.01; do
+		taskset -c $dir python ~/bin/LDPred.py gibbs --cf=madeCoord --ldr=$ldr --f=$f --N=$sampleSize --out=donePred --ldf=None
+	done
+	
+	i=1
+        ls *_p[0-9].* | while read pred; do
+                numLine=`cat storeRecord | fgrep ${baseName}.${score}.${chr}.${i}.gz | wc -l`
+                if [ $numLine -eq 0 ]; then
+                        Rscript makeLDPredSet.R $pred
 
-        cat goSummStat | cut -f1 > specificRsids
-        plink --threads 1 --bfile ../new.${chr} --extract specificRsids --make-bed --out ss
-
-        name=`echo $file | cut -f1 -d'.'`
-        sampSize=`cat ~/prsDatabase/metaData | grep $name | cut -f2`
-
-        cp /home/kulmsc/slurm/input/prscs/* .
-
-	cat summStatHeader goSummStat > smallSummStat
-        i=1
-	b=0.5
-        for phi in 0.000001 0.5; do
-                for a in 1 10; do
-			taskset -c $dir python PRScs.py --ref_dir=/home/kulmsc/athena --bim_prefix=ss --sst_file=smallSummStat --n_gwas=$sampSize --out_dir=. \
-                        	--chrom=$chr --phi=$phi --a=$a --b=$b --n_burnin=100 --n_iter=300
-                        cat pst* > fullPst
-                        rm pst*
-
-                        pstFile=fullPst
-                        cat $pstFile | cut -f2 > prsRsids
-                        fgrep -f prsRsids fullSummStat > preSummStat
-                        cat preSummStat | cut -f1-7 > preSS1
-                        cat preSummStat | cut -f9-10 > preSS2
-                        cat $pstFile | cut -f6 > newBeta
-                        paste preSS1 newBeta preSS2 > summStat
-
-                        baseName="${file::-3}"
-                        plink --bfile ../new.${chr}  --score summStat 2 4 8 no-sum
+                        plink --threads 1 --bfile ../new.${chr} --score newSummStat 2 4 8 sum header
                         if [ -f plink.profile ]; then
                                 sed 's/ \+/\t/g' plink.profile | cut -f7 > ../store${dir}/${baseName}.${score}.${chr}.${i}
                                 gzip ../store${dir}/${baseName}.${score}.${chr}.${i}
+                                mv newSummStat ../sets/chr${chr}/${baseName}.${score}.${chr}.${i}
                         fi
-                        mv summStat ../sets/chr${chr}/${baseName}.${score}.${chr}.${i}
-                        let i=i+1
-                        rm fullPst
-                done
+                fi
+                let i=i+1
         done
+	fi
+
+elif [ $score == "stackCT" ]; then
+	author=`echo $file | cut -f1 -d'.'`
+        checkFile=`cat storeRecord | fgrep ${baseName}.${score}.${chr} | wc -l`
+        if [ $checkFile -lt 3 ]; then
+        cp /home/kulmsc/athena/workDir/extraFiles/stackCT.R .
+
+        Rscript stackCT.R $author $chr
+        for i in {1..3};do
+                plink --memory 4000 --threads 1 --bfile ../new.${chr}  --score summStat$i 2 4 8 sum
+                if [ -f plink.profile ]; then
+                        sed 's/ \+/\t/g' plink.profile | cut -f7 > ../store${dir}/${baseName}.${score}.${chr}.${i}
+                        gzip ../store${dir}/${baseName}.${score}.${chr}.${i}
+                fi
+                mv summStat$i ../sets/chr${chr}/${baseName}.${score}.${chr}.${i}
+        done
+
+        fi
 
 
 fi
